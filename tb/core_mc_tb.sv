@@ -1,16 +1,22 @@
 `timescale 1ns/1ps
-// Runs a riscv-tests hex image on core_mc and reports PASS / FAIL / TIMEOUT.
 //
-// Memory map (unified, von Neumann):
-//   0x0000 - 0x0FFF   RAM, 1024 words, SYNCHRONOUS read (models an SRAM macro)
-//   0x1000            UART data   (write: transmit low byte)
-//   0x1004            UART status (read: bit 0 = busy; always 0 here)
+// Testbench: runs a hex image on core_mc and reports PASS / FAIL / TIMEOUT.
 //
-// riscv_test.h prints 'P' on pass, or 'F' plus two hex digits of TESTNUM on
-// failure, then halts in a self-jump. This bench watches the memory port.
+// Select the image with the plusarg +HEX=<path>. Select the ISA with the
+// NREGS parameter (16 = RV32E, 32 = RV32I).
+//
+// Memory map
+//   0x0000 - 0x0FFF   RAM, 1024 words, synchronous read
+//   0x1000            UART data   (write: transmit the low byte)
+//   0x1004            UART status (read: bit 0 = busy, always 0 here)
+//
+// The test environment prints 'P' on pass, or 'F' followed by two hex digits of
+// TESTNUM on failure, then halts. This bench watches the memory port for those
+// writes.
+//
 module core_mc_tb;
 
-    parameter integer NREGS   = 32;
+    parameter integer NREGS   = 16;
     parameter integer TIMEOUT = 400000;
 
     reg clk = 0, rst = 1;
@@ -28,7 +34,7 @@ module core_mc_tb;
         .retire(retire), .retire_pc(retire_pc)
     );
 
-    // ---------------- unified memory, synchronous read ----------------
+    // ---------------- unified memory ----------------
     localparam integer WORDS = 1024;
     reg [31:0] ram [0:WORDS-1];
 
@@ -39,8 +45,7 @@ module core_mc_tb;
 
     always @(posedge clk) begin
         if (mem_en && sel_ram) begin
-            // Byte strobes applied as a mask: iverilog mishandles part-selects
-            // on an array element with a variable index.
+            // Byte strobes as a mask (avoids part-select on a variable index).
             wmask = {{8{mem_wstrb[3]}}, {8{mem_wstrb[2]}},
                      {8{mem_wstrb[1]}}, {8{mem_wstrb[0]}}};
             ram[widx] <= (ram[widx] & ~wmask) | (mem_wdata & wmask);

@@ -1,26 +1,24 @@
 `timescale 1ns / 1ps
+//
 // 32-bit memory built from four 8-bit SRAM macros.
 //
-// WHY THIS EXISTS
-// The original imem/dmem infer block RAM on an FPGA, which costs no logic. On
-// an ASIC there is nothing to infer: synthesis builds them from flip-flops, and
-// 4 KB of flops is roughly 3.5 mm^2 against a 0.5 mm^2 budget. This wrapper
-// swaps that for hard SRAM macros, which are roughly an order of magnitude
-// denser because the bitcell is custom-drawn and the read mux tree disappears
-// into the macro's internal decoder and sense amps.
+// Parameters
+//   WORDS   depth in 32-bit words.
 //
-// THE ONE BEHAVIOURAL DIFFERENCE, AND IT MATTERS
-// Macro reads are SYNCHRONOUS. rdata is valid the cycle AFTER the address is
-// presented, not combinationally in the same cycle. The original dmem did:
-//     assign r_data = {mem3[ridx], ...};   // combinational
-// which is what let riskyC1 resolve load-use without a stall. That guarantee is
-// gone. In a multicycle FSM this costs nothing: present the address in one
-// state, consume rdata in the next. In a pipeline it would require a real
-// load-use stall, which is an independent reason the multicycle core is the
-// right choice for this chip.
+// Interface
+//   Word-addressed. wstrb selects which bytes are written; wstrb = 0 is a read.
+//   Reads are SYNCHRONOUS: rdata is valid the cycle after en is asserted.
+//   Read-during-write returns the previous contents.
+//   Contents are undefined at power-up and must be loaded before use.
 //
-// Byte writes work by strobing only the lanes being written, which maps onto
-// the four separate macros exactly as the original four byte-lane arrays did.
+// Build modes
+//   default                  behavioural model, same timing. Simulation and FPGA.
+//   +define+USE_SRAM_MACRO   instantiates four gf180mcu 512x8 macros.
+//
+// TODO: the macro port names and polarities below are unverified against the
+// PDK. They are active low (CEN low = selected, GWEN low = write). Confirm
+// before tapeout.
+//
 module sram_mem #(
     parameter int WORDS = 512,                 // 512 words x 32b = 2 KB
     parameter int AW    = $clog2(WORDS)
@@ -34,13 +32,6 @@ module sram_mem #(
 );
 
 `ifdef USE_SRAM_MACRO
-    //-----------------------------------------------------------------------
-    // Hard macro instantiation.
-    //
-    // VERIFY THESE PORT NAMES AND POLARITIES AGAINST THE PDK before taping out.
-    // The gf180mcu SRAM macros use active-LOW enables, which is the classic way
-    // to lose a week: CEN low means selected, GWEN low means write.
-    //-----------------------------------------------------------------------
     genvar lane;
     generate
         for (lane = 0; lane < 4; lane++) begin : g_lane
@@ -58,11 +49,6 @@ module sram_mem #(
         end
     endgenerate
 `else
-    //-----------------------------------------------------------------------
-    // Behavioural model with identical timing: synchronous read, byte strobes.
-    // Use this for simulation and for FPGA prototyping so the RTL above and
-    // below the wrapper is exercised with the real one-cycle read latency.
-    //-----------------------------------------------------------------------
     logic [7:0] lane0 [0:WORDS-1];
     logic [7:0] lane1 [0:WORDS-1];
     logic [7:0] lane2 [0:WORDS-1];
@@ -74,7 +60,6 @@ module sram_mem #(
             if (wstrb[1]) lane1[addr] <= wdata[15:8];
             if (wstrb[2]) lane2[addr] <= wdata[23:16];
             if (wstrb[3]) lane3[addr] <= wdata[31:24];
-            // Read-during-write returns the OLD contents on these macros.
             rdata <= {lane3[addr], lane2[addr], lane1[addr], lane0[addr]};
         end
     end

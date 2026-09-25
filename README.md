@@ -41,15 +41,11 @@ PASS    tests/add.hex  (1290 cycles)
 NREGS=16 : 38 passed, 0 failed
 ```
 
-## Why multicycle
+## Architecture
 
-1. **Area.** The pipeline costs 400–500 stage-register flops plus forwarding and
-   hazard logic, roughly 0.05 mm² per core at ~110 um²/flop, for throughput this
-   chip does not need.
-2. **Memory.** SRAM macros read synchronously: data is valid the cycle *after*
-   the address. A single-cycle core cannot absorb that (its PC advances every
-   clock); a pipeline needs a real load-use interlock. The multicycle FSM
-   absorbs it for one extra state.
+Multicycle rather than pipelined, for area and because SRAM macros read
+synchronously: data is valid the cycle after the address. A pipeline would need
+a load-use interlock; the FSM absorbs the latency in one extra state.
 
 FSM:
 
@@ -69,33 +65,17 @@ Set `NREGS=16`. The instruction encoding is unchanged (register fields are 5
 bits in both bases), so the decoder, immediate generator and ALU are untouched.
 Only the register array shrinks, which is where 36% of the core area went.
 
-**All 38 official tests pass unmodified at NREGS=16.** A static scan of the
-binaries suggests otherwise (register fields up to x29 and x31 appear), but that
-scan decodes each test's *data* section as instructions. The executed code stays
-within x0..x15.
+All 38 official tests pass unmodified at NREGS=16.
 
-x16..x31 degrade to x0: reads return zero, writes are dropped. They are *not*
-aliased onto x0..x15 by truncating the address, because aliasing would let RV32I
-code appear to work whenever aliased pairs were never live at the same time,
-which is a silent and misleading failure mode.
+x16..x31 degrade to x0: reads return zero, writes are dropped. They are not
+aliased onto x0..x15, so RV32I code that touches them fails rather than
+appearing to work.
 
-## Known trap: the register-file bypass
+## register_file BYPASS parameter
 
-`register_file.sv` takes a `BYPASS` parameter.
-
-* `BYPASS=1` for the **pipelined** core. `rd_data` comes from the writeback
-  stage, i.e. a different instruction, so forwarding it to a read port is both
-  correct and necessary.
-* `BYPASS=0` for **this** core. In multicycle (and single-cycle) the write
-  target is the instruction currently reading its own operands, so the bypass
-  closes a combinational loop:
-
-```
-rs1_data -> ALU -> wb_data -> rd_data -> bypass -> rs1_data
-```
-
-The simulator spins until it is killed. Anyone writing a non-pipelined wrapper
-around this register file will hit it, and it is not obvious.
+`BYPASS` must be 0 for this core and any other non-pipelined core. It may only
+be 1 where `rd_data` comes from a later pipeline stage. Otherwise the bypass
+closes a combinational loop: `rs1_data -> ALU -> wb_data -> rd_data -> rs1_data`.
 
 ## Memory
 
@@ -106,9 +86,8 @@ byte strobes mapping onto the lanes. Two build modes:
   simulation and FPGA prototyping
 * `+define+USE_SRAM_MACRO`: instantiates `gf180mcu_fd_ip_sram__sram512x8m8wm1`
 
-**The macro port names and polarities are written from memory and have not been
-checked against the PDK.** They are active-low (CEN low = selected, GWEN low =
-write). Verify before tapeout.
+TODO: the macro port names and polarities are unverified against the PDK. They
+are active low (CEN low = selected, GWEN low = write). Confirm before tapeout.
 
 Testbench memory map (unified, von Neumann):
 

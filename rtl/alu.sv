@@ -1,22 +1,20 @@
 `timescale 1ns / 1ps
-// ALU for riskyC1, ASIC-oriented rewrite.
 //
-// Functionally identical to the original (same ports, same ctrl encoding), but
-// restructured to share hardware instead of inferring it three times over:
+// ALU. Purely combinational.
 //
-//   original                          this version
-//   --------                          ------------
-//   a + b            (adder)          one 33-bit adder/subtractor, shared by
-//   a - b            (subtractor)     ADD, SUB, SLT and SLTU
-//   a <<  b          (barrel shift)   one right-shifter, shared by SLL, SRL
-//   a >>  b          (barrel shift)   and SRA. SLL is done by reversing the
-//   a >>> b          (barrel shift)   operand in, shifting right, reversing out
-//   signed  compare  (comparator)     both comparisons fall out of the
-//   unsigned compare (comparator)     subtractor's sign bit and carry out
+// ctrl encoding
+//   0 ADD   1 SUB   2 AND   3 OR    4 XOR
+//   5 SLL   6 SRL   7 SRA   8 SLT   9 SLTU
+//   any other value returns 0.
 //
-// Bit reversal is pure wiring and costs no cells. The equivalence testbench in
-// tb/alu_equiv_tb.sv checks this against the original exhaustively over ctrl
-// and shift amounts, plus directed corners and random vectors.
+// Shift amount is taken from b[4:0]; higher bits of b are ignored.
+//
+// Implementation notes
+//   One adder serves ADD, SUB, SLT and SLTU: the comparisons are derived from
+//   the subtraction's sign bit and carry out.
+//   One right-shifter serves SLL, SRL and SRA: SLL reverses the operand in and
+//   the result out, and SRA selects a sign fill. Bit reversal is wiring only.
+//
 module alu (
     input  logic [31:0] a,
     input  logic [31:0] b,
@@ -34,8 +32,7 @@ module alu (
     localparam logic [3:0] ALU_SLT  = 4'd8;
     localparam logic [3:0] ALU_SLTU = 4'd9;
 
-    // ---------------- shared adder / subtractor ----------------
-    // SUB, SLT and SLTU all need a - b, so they share one carry chain.
+    // ---------------- adder / subtractor ----------------
     logic        do_sub;
     logic [31:0] b_eff;
     logic [32:0] sum33;
@@ -44,17 +41,16 @@ module alu (
     assign b_eff  = do_sub ? ~b : b;
     assign sum33  = {1'b0, a} + {1'b0, b_eff} + {32'd0, do_sub};
 
-    // Unsigned a < b: subtracting produces no carry out.
+    // Unsigned a < b: no carry out of a - b.
     logic ltu;
     assign ltu = ~sum33[32];
 
-    // Signed a < b: if the signs differ, a is smaller exactly when it is
-    // negative; otherwise the difference's sign bit answers it.
+    // Signed a < b: differing signs means a is smaller iff a is negative,
+    // otherwise the difference's sign bit decides.
     logic lt;
     assign lt = (a[31] ^ b[31]) ? a[31] : sum33[31];
 
-    // ---------------- shared right shifter ----------------
-    // SLL is a right shift of the bit-reversed operand, reversed back.
+    // ---------------- right shifter ----------------
     function automatic logic [31:0] rev32(input logic [31:0] x);
         for (int i = 0; i < 32; i++) rev32[i] = x[31-i];
     endfunction
@@ -69,8 +65,8 @@ module alu (
     assign shift_src = (ctrl == ALU_SLL) ? rev32(a) : a;
     assign sign_fill = (ctrl == ALU_SRA) ? shift_src[31] : 1'b0;
     assign shift_ext = $signed({sign_fill, shift_src});
-    assign shifted   = shift_ext >>> shamt;   // bit 32 replicates, so SRA fills
-                                              // with the sign and SRL with zero
+    assign shifted   = shift_ext >>> shamt;   // bit 32 replicates: sign for SRA,
+                                              // zero for SRL and SLL
 
     // ---------------- output select ----------------
     always_comb begin

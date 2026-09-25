@@ -1,26 +1,26 @@
 `timescale 1ns / 1ps
-// riskyC1-MC : multicycle RV32I/RV32E core for the gf180 tapeout.
 //
-// Same datapath modules as the pipelined riskyC1 (decoder, imm_gen, alu,
-// mem_access, register_file) driven by a 5-state FSM instead of pipeline
-// registers. Two reasons for the change:
+// riskyC1-MC : multicycle RV32E core.
 //
-//   1. Area. The pipeline costs 400-500 flops of stage registers plus the
-//      forwarding network and hazard logic, for throughput this chip does not
-//      need.
-//   2. Memory. SRAM macros read synchronously: data is valid the cycle AFTER
-//      the address is presented. A single-cycle core cannot absorb that at all
-//      (its PC advances every clock), and a pipeline needs a real load-use
-//      interlock. A multicycle FSM absorbs it for the cost of one state,
-//      because it already spends a whole cycle on fetch.
+// Parameters
+//   NREGS   16 = RV32E (default), 32 = RV32I.
 //
-// Cycle counts:  ALU / branch / jump 3,  store 4,  load 5.
+// Memory interface
+//   Single port, byte-addressed, SYNCHRONOUS read: mem_rdata is valid the cycle
+//   after mem_en is asserted. mem_wstrb = 0 indicates a read.
 //
-// NREGS selects the base ISA: 32 for RV32I, 16 for RV32E. The instruction
-// encoding is identical in both, so nothing upstream of the register file
-// changes.
+// FSM
+//   S_FETCH    present PC
+//   S_FETCH_W  instruction valid on mem_rdata, latched into IR
+//   S_EXEC     decode, register read, ALU. Non-memory instructions write back
+//              and update the PC here
+//   S_MEM      present the data address; stores complete here
+//   S_MEM_W    load data valid on mem_rdata, written back here
+//
+// Cycles per instruction: 3 for ALU, branch and jump; 4 for stores; 5 for loads.
+//
 module core_mc #(
-    parameter int NREGS = 32
+    parameter int NREGS = 16
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -43,7 +43,7 @@ module core_mc #(
     state_e      state;
     logic [31:0] pc, ir;
 
-    // ---------------- decode (combinational; ir is stable across states) ----
+    // ---------------- decode ----------------
     logic [4:0] rd, rs1, rs2;
     logic [2:0] func3, imm_sel;
     logic [3:0] alu_op;
@@ -77,8 +77,8 @@ module core_mc #(
     alu u_alu (.a(rs1_data), .b(alu_b), .ctrl(alu_op), .res(alu_result));
 
     // ---------------- branch comparison ----------------
-    // Kept out of the ALU: for branches the decoder leaves alu_op at ADD so the
-    // ALU is free for address arithmetic, so the comparison needs its own path.
+    // Separate from the ALU: for branches the decoder leaves alu_op at ADD so
+    // the ALU is available for address arithmetic.
     logic eq, lt, ltu, branch_taken;
     assign eq  = (rs1_data == rs2_data);
     assign lt  = ($signed(rs1_data) < $signed(rs2_data));
@@ -145,7 +145,7 @@ module core_mc #(
         endcase
     end
 
-    // Register write: in EXEC for ALU-class instructions, in MEM_W for loads.
+    // Register write: EXEC for ALU-class instructions, MEM_W for loads.
     assign rf_we = reg_write & ( (state == S_EXEC && !mem_read && !mem_write)
                                | (state == S_MEM_W) );
 

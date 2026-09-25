@@ -1,152 +1,106 @@
 # riskyC1-MC
 
-Multicycle RV32I / RV32E core for the Aussie Chip Collective gf180 tapeout.
+Multicycle RV32E core and SoC for the gf180 tapeout. Based on
+[riskyC1](https://github.com/bastian80821/riskyC1), a 5-stage pipelined RV32I
+core that passes the official riscv-tests suite on a Spartan-7.
 
-Derived from [riskyC1](https://github.com/bastian80821/riskyC1), a 5-stage
-pipelined RV32I core that passes 38/38 of the official `riscv-tests` rv32ui
-suite on a Spartan-7. This version replaces the pipeline with a 5-state FSM for
-area and for compatibility with synchronous SRAM macros.
+![SoC block diagram](docs/soc_block_diagram.svg)
 
-## Status
+## What it is
 
-| Configuration | Suite | Result |
-|---|---|---|
-| NREGS=32 (RV32I) | 38 official riscv-tests rv32ui | **38 / 38 pass** |
-| NREGS=16 (RV32E) | 38 official riscv-tests rv32ui | **38 / 38 pass** |
-| NREGS=16 (RV32E) | hand-written RV32E self-test | pass |
-| ALU vs original riskyC1 ALU | 203,744 vectors | 0 mismatches |
-| SRAM wrapper | byte / halfword / word, sync read | pass |
+A single core with unified instruction and data memory, a UART, and a
+bootloader that loads programs over serial. RV32E by default, so 16 registers
+instead of 32. The instruction encoding is unchanged, only the register file
+shrinks.
 
-## Quick start
+The core is multicycle rather than pipelined. SRAM macros read synchronously,
+so read data arrives the cycle after the address. A pipeline would need a
+load-use interlock to handle that. The FSM absorbs it in one extra state.
+
+## Running it
 
 ```sh
-git clone https://github.com/<org>/riskyC1-mc.git
-cd riskyC1-mc
+./sim/run_iverilog.sh 16        # core only, all tests
+./sim/run_iverilog.sh 32        # same at 32 registers
+./sim/run_soc.sh                # full SoC, program loaded over serial
+```
 
-# core only: hex loaded straight into memory (fast)
-./sim/run_iverilog.sh 16        # RV32E, all tests
-./sim/run_iverilog.sh 32        # RV32I, all tests
-./sim/run_iverilog.sh 16 addi   # one test
+Vivado, non-project mode:
 
-# full SoC: program shifted in over serial, output decoded from the tx pin
-./sim/run_soc.sh                # sample of tests
-./sim/run_soc.sh all            # every test (slow)
-
-# Vivado XSim
+```sh
 vivado -mode batch -source sim/run_vivado.tcl -tclargs 16
 ```
 
-Expected output:
+For the Vivado GUI, add `rtl/*.sv` as design sources and `tb/core_mc_tb.sv` or
+`tb/soc_tb.sv` as simulation top. Pick the test with `-testplusarg HEX=<path>`
+in the simulation settings.
+
+## Verification
+
+38 official riscv-tests plus an RV32E self-test pass at both 16 and 32
+registers. The same programs pass through the SoC, loaded over simulated
+serial and checked by decoding the transmit pin.
+
+`tb/core_mc_tb.sv` preloads memory and watches the memory port. Fast, use it
+while working on the core. `tb/soc_tb.sv` only touches the two serial pins, so
+it exercises the real boot path. Slow, use it to check the SoC.
+
+## Core
+
+Five states. FETCH presents the PC, FETCH_W latches the instruction, EXEC
+decodes and runs the ALU, MEM presents the data address, MEM_W takes the load
+result. Non-memory instructions finish in EXEC. Three cycles for ALU, branch
+and jump, four for stores, five for loads.
+
+Memory port is byte-addressed with a one-cycle read latency. `mem_wstrb` of
+zero means a read.
+
+## Memory map
 
 ```
-PASS    tests/add.hex  (1290 cycles)
-...
-------------------------------------------------
-NREGS=16 : 38 passed, 0 failed
+0x0000 - 0x0FFF   RAM
+0x1000            UART data, write to transmit
+0x1004            UART status, bit 0 is transmitter busy
 ```
 
-## Architecture
+Memory contents are undefined at power-up, so the bootloader holds the core in
+reset until a program has been received. The host sends a 4-byte word count
+followed by that many little-endian words.
 
-Multicycle rather than pipelined, for area and because SRAM macros read
-synchronously: data is valid the cycle after the address. A pipeline would need
-a load-use interlock; the FSM absorbs the latency in one extra state.
+## Things to know
 
-FSM:
+`register_file.sv` has a `BYPASS` parameter. It must be 0 here. The bypass is
+only correct when `rd_data` comes from a later pipeline stage. In a multicycle
+core the write target is the instruction currently reading its operands, so the
+bypass closes a combinational loop through the ALU.
 
-```
-S_FETCH    present PC, mem_en=1
-S_FETCH_W  instruction valid on mem_rdata -> IR
-S_EXEC     decode, regfile read, ALU; non-memory ops write back and update PC
-S_MEM      present address; stores issue here and update PC
-S_MEM_W    load data valid; write back and update PC
-```
-
-Cycles per instruction: ALU / branch / jump 3, store 4, load 5.
-
-## RV32E
-
-Set `NREGS=16`. The instruction encoding is unchanged (register fields are 5
-bits in both bases), so the decoder, immediate generator and ALU are untouched.
-Only the register array shrinks, which is where 36% of the core area went.
-
-All 38 official tests pass unmodified at NREGS=16.
-
-x16..x31 degrade to x0: reads return zero, writes are dropped. They are not
-aliased onto x0..x15, so RV32I code that touches them fails rather than
+With 16 registers, x16 to x31 read as zero and writes to them are dropped. They
+are not aliased onto x0 to x15, so RV32I code that uses them fails rather than
 appearing to work.
 
-## register_file BYPASS parameter
+`sram_mem.sv` has a behavioural model by default and instantiates gf180 macros
+under `USE_SRAM_MACRO`. The macro port names and polarities have not been
+checked against the PDK.
 
-`BYPASS` must be 0 for this core and any other non-pipelined core. It may only
-be 1 where `rd_data` comes from a later pipeline stage. Otherwise the bypass
-closes a combinational loop: `rs1_data -> ALU -> wb_data -> rd_data -> rs1_data`.
+The UART baud divider is derived from a `CLK_FREQ` parameter that still
+defaults to 100 MHz.
 
-## Memory
-
-`rtl/sram_mem.sv` presents a 32-bit memory built from four 8-bit macros, with
-byte strobes mapping onto the lanes. Two build modes:
-
-* default: behavioural model with **identical timing** (synchronous read), for
-  simulation and FPGA prototyping
-* `+define+USE_SRAM_MACRO`: instantiates `gf180mcu_fd_ip_sram__sram512x8m8wm1`
-
-TODO: the macro port names and polarities are unverified against the PDK. They
-are active low (CEN low = selected, GWEN low = write). Confirm before tapeout.
-
-Testbench memory map (unified, von Neumann):
+## Files
 
 ```
-0x0000 - 0x0FFF   RAM, 1024 words, synchronous read
-0x1000            UART data   (write: transmit low byte)
-0x1004            UART status (read: bit 0 = busy)
+rtl/soc.sv            core, memory, bootloader, UART, address decode
+rtl/core_mc.sv        multicycle core
+rtl/register_file.sv  NREGS and BYPASS parameters
+rtl/alu.sv            shared adder and shifter
+rtl/sram_mem.sv       four 8-bit macros, synchronous read
+rtl/decoder.sv        from riskyC1
+rtl/imm_gen.sv        from riskyC1
+rtl/mem_access.sv     from riskyC1
+rtl/uart_rx.sv        from riskyC1
+rtl/uart_tx.sv        from riskyC1
+rtl/bootloader.sv     from riskyC1
+tb/core_mc_tb.sv      core only
+tb/soc_tb.sv          full SoC over serial
+tools/mk_rv32e_test.py  generates the RV32E self-test
+docs/AREA.md          area numbers
 ```
-
-## Layout
-
-```
-rtl/soc.sv            SoC top: core, memory, bootloader, memory-mapped UART
-rtl/core_mc.sv        multicycle core, parameterised NREGS
-rtl/register_file.sv  parameterised NREGS + BYPASS, no `initial` in synthesis
-rtl/alu.sv            shared adder and shifter, 28% fewer cells than original
-rtl/sram_mem.sv       4 x 8-bit macro wrapper, synchronous read, byte strobes
-rtl/decoder.sv        unchanged from riskyC1
-rtl/imm_gen.sv        unchanged from riskyC1
-rtl/mem_access.sv     unchanged from riskyC1
-rtl/uart_rx.sv        unchanged from riskyC1
-rtl/uart_tx.sv        unchanged from riskyC1
-rtl/bootloader.sv     unchanged from riskyC1
-tb/core_mc_tb.sv      core only: hex preloaded, watches the memory port
-tb/soc_tb.sv          full SoC: drives the rx pin, decodes the tx pin
-tests/*.hex           38 official riscv-tests + one RV32E self-test
-tools/mk_rv32e_test.py  generates the RV32E self-test (x0..x15 only)
-sim/run_iverilog.sh   batch runner, core only, Icarus
-sim/run_soc.sh        batch runner, full SoC, Icarus
-sim/run_vivado.tcl    batch runner, Vivado XSim
-docs/AREA.md          area budget and where it goes
-```
-
-## Next: dual core
-
-This is the single-core foundation. The multicore layer is not built yet:
-
-* **Arbiter.** `soc.sv` already has a two-way request mux (bootloader vs core),
-  but they are mutually exclusive by construction. The dual-core version needs a
-  real arbiter granting one of three requesters per cycle; the loser stalls by
-  holding `mem_en`, which the FSM already tolerates.
-* **Lock register.** A shared memory-mapped byte where a *read* returns the old
-  value and sets it to 1 in the same cycle, and a write clears it. Because the
-  arbiter grants one core per cycle, that read-and-set cannot interleave, which
-  gives atomic test-and-set from plain `LB`/`SB`. No new instructions needed.
-* **CORE_ID.** Read-only byte returning 0 or 1, hardwired per core. Both cores
-  boot the same image and diverge on it.
-* **EXIT.** Per-core halt flag; when both are set, drive a done pin.
-
-Demo program: both cores sum a slice of a shared array, accumulating into a
-shared total behind the lock, then set EXIT. Correct final total proves identity
-divergence, shared-memory communication and mutual exclusion in ~40
-instructions, observable on a pin without a UART.
-
-## Contributing
-
-Branch off `main`, open a PR, and make sure `./sim/run_iverilog.sh 32` and
-`./sim/run_iverilog.sh 16` both report 38 passed before requesting review.

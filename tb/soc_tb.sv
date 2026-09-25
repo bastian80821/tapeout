@@ -71,11 +71,12 @@ module soc_tb;
 
     // ---------------- load the image and run ----------------
     reg [31:0] img [0:MEM_WORDS-1];
-    reg [8*64:1] hexfile;
+    reg [8*256:1] hexfile;
     integer nwords, i, cycles;
 
     initial begin
-        if (!$value$plusargs("HEX=%s", hexfile)) hexfile = "test.hex";
+        if (!$value$plusargs("HEX=%s", hexfile))
+        hexfile = "C:/Users/Bmars/Desktop/riskyC1_MC/reference/riskyC1-mc/tests/rv32e_test.hex";
         for (i = 0; i < MEM_WORDS; i = i + 1) img[i] = 32'hFFFF_FFFF;
         $readmemh(hexfile, img);
 

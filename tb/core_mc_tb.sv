@@ -76,10 +76,11 @@ module core_mc_tb;
     // ---------------- run ----------------
     integer      cycles = 0;
     integer      i;
-    reg [8*64:1] hexfile;
+    reg [8*256:1] hexfile;
 
     initial begin
-        if (!$value$plusargs("HEX=%s", hexfile)) hexfile = "test.hex";
+        if (!$value$plusargs("HEX=%s", hexfile))
+    hexfile = "C:/Users/Bmars/Desktop/riskyC1_MC/reference/riskyC1-mc/tests/addi.hex";
         for (i = 0; i < WORDS; i = i + 1) ram[i] = 32'h0;
         $readmemh(hexfile, ram);
 

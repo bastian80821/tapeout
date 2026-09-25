@@ -102,5 +102,4 @@ rtl/bootloader.sv     from riskyC1
 tb/core_mc_tb.sv      core only
 tb/soc_tb.sv          full SoC over serial
 tools/mk_rv32e_test.py  generates the RV32E self-test
-docs/AREA.md          area numbers
 ```

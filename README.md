@@ -23,10 +23,14 @@ area and for compatibility with synchronous SRAM macros.
 git clone https://github.com/<org>/riskyC1-mc.git
 cd riskyC1-mc
 
-# Icarus Verilog (fast, no licence)
-./sim/run_iverilog.sh 32        # RV32I, all tests
+# core only: hex loaded straight into memory (fast)
 ./sim/run_iverilog.sh 16        # RV32E, all tests
+./sim/run_iverilog.sh 32        # RV32I, all tests
 ./sim/run_iverilog.sh 16 addi   # one test
+
+# full SoC: program shifted in over serial, output decoded from the tx pin
+./sim/run_soc.sh                # sample of tests
+./sim/run_soc.sh all            # every test (slow)
 
 # Vivado XSim
 vivado -mode batch -source sim/run_vivado.tcl -tclargs 16
@@ -100,6 +104,7 @@ Testbench memory map (unified, von Neumann):
 ## Layout
 
 ```
+rtl/soc.sv            SoC top: core, memory, bootloader, memory-mapped UART
 rtl/core_mc.sv        multicycle core, parameterised NREGS
 rtl/register_file.sv  parameterised NREGS + BYPASS, no `initial` in synthesis
 rtl/alu.sv            shared adder and shifter, 28% fewer cells than original
@@ -107,10 +112,15 @@ rtl/sram_mem.sv       4 x 8-bit macro wrapper, synchronous read, byte strobes
 rtl/decoder.sv        unchanged from riskyC1
 rtl/imm_gen.sv        unchanged from riskyC1
 rtl/mem_access.sv     unchanged from riskyC1
-tb/core_mc_tb.sv      runs a hex image, watches the UART for P / F
+rtl/uart_rx.sv        unchanged from riskyC1
+rtl/uart_tx.sv        unchanged from riskyC1
+rtl/bootloader.sv     unchanged from riskyC1
+tb/core_mc_tb.sv      core only: hex preloaded, watches the memory port
+tb/soc_tb.sv          full SoC: drives the rx pin, decodes the tx pin
 tests/*.hex           38 official riscv-tests + one RV32E self-test
 tools/mk_rv32e_test.py  generates the RV32E self-test (x0..x15 only)
-sim/run_iverilog.sh   batch runner, Icarus
+sim/run_iverilog.sh   batch runner, core only, Icarus
+sim/run_soc.sh        batch runner, full SoC, Icarus
 sim/run_vivado.tcl    batch runner, Vivado XSim
 docs/AREA.md          area budget and where it goes
 ```
@@ -119,8 +129,10 @@ docs/AREA.md          area budget and where it goes
 
 This is the single-core foundation. The multicore layer is not built yet:
 
-* **Arbiter and request mux.** One grant per cycle; the loser stalls by holding
-  `mem_en` and waiting, which the FSM already tolerates.
+* **Arbiter.** `soc.sv` already has a two-way request mux (bootloader vs core),
+  but they are mutually exclusive by construction. The dual-core version needs a
+  real arbiter granting one of three requesters per cycle; the loser stalls by
+  holding `mem_en`, which the FSM already tolerates.
 * **Lock register.** A shared memory-mapped byte where a *read* returns the old
   value and sets it to 1 in the same cycle, and a write clears it. Because the
   arbiter grants one core per cycle, that read-and-set cannot interleave, which

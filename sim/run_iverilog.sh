@@ -7,8 +7,9 @@ set -u
 NREGS=${1:-32}
 ONLY=${2:-}
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/rtl/core_mc.sv $ROOT/rtl/decoder.sv $ROOT/rtl/imm_gen.sv \
-     $ROOT/rtl/mem_access.sv $ROOT/rtl/alu.sv $ROOT/rtl/register_file.sv \
+SRC="$ROOT/rtl/core/core.sv \
+     $ROOT/rtl/core/decoder.sv $ROOT/rtl/core/imm_gen.sv \
+     $ROOT/rtl/mem/mem_access.sv $ROOT/rtl/core/alu.sv $ROOT/rtl/core/register_file.sv \
      $ROOT/tb/core_mc_tb.sv"
 OUT=$(mktemp -d)/sim
 iverilog -g2012 -s core_mc_tb -o "$OUT" -Pcore_mc_tb.NREGS=$NREGS $SRC 2>&1 \

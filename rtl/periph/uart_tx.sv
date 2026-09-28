@@ -50,7 +50,7 @@ localparam int CYCLES_PER_BIT = CLK_FREQ / BAUD_RATE;
                 end
                 START: begin
                     tx <= 1'b0;
-                    if(cycle_cnt == CYCLES_PER_BIT -1) begin
+                    if(32'(cycle_cnt) == CYCLES_PER_BIT -1) begin
                         cycle_cnt <= 0;
                         state <= DATA;
                     end else begin
@@ -59,7 +59,7 @@ localparam int CYCLES_PER_BIT = CLK_FREQ / BAUD_RATE;
                 end
                 DATA: begin
                     tx <= shift_reg[bit_idx];        // always drive the current bit
-                    if (cycle_cnt == CYCLES_PER_BIT - 1) begin
+                    if (32'(cycle_cnt) == CYCLES_PER_BIT - 1) begin
                         cycle_cnt <= '0;
                         if (bit_idx == 3'd7)        //all bits sent
                             state <= STOP;
@@ -71,7 +71,7 @@ localparam int CYCLES_PER_BIT = CLK_FREQ / BAUD_RATE;
                 end
                 STOP: begin
                     tx <= 1'b1;
-                    if(cycle_cnt == CYCLES_PER_BIT -1) begin
+                    if(32'(cycle_cnt) == CYCLES_PER_BIT -1) begin
                         cycle_cnt <= 0;
                         state <= IDLE;
                     end else begin

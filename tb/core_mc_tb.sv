@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 //
-// Testbench: runs a hex image on core_mc and reports PASS / FAIL / TIMEOUT.
+// Testbench: runs a hex image on core and reports PASS / FAIL / TIMEOUT.
 //
 // Select the image with the plusarg +HEX=<path>. Select the ISA with the
 // NREGS parameter (16 = RV32E, 32 = RV32I).
@@ -27,7 +27,7 @@ module core_mc_tb;
     wire [3:0]  mem_wstrb;
     reg  [31:0] mem_rdata;
 
-    core_mc #(.NREGS(NREGS)) dut (
+    core #(.NREGS(NREGS)) dut (
         .clk(clk), .rst(rst),
         .mem_en(mem_en), .mem_addr(mem_addr), .mem_wdata(mem_wdata),
         .mem_wstrb(mem_wstrb), .mem_rdata(mem_rdata),
@@ -38,7 +38,7 @@ module core_mc_tb;
     localparam integer WORDS = 1024;
     reg [31:0] ram [0:WORDS-1];
 
-    wire [31:0] widx     = mem_addr >> 2;
+    wire [9:0]  widx     = mem_addr[11:2];
     wire        sel_ram  = (mem_addr < (WORDS*4));
     wire        sel_uart = (mem_addr >= 32'h1000) && (mem_addr < 32'h2000);
     reg  [31:0] wmask;
@@ -76,15 +76,25 @@ module core_mc_tb;
     // ---------------- run ----------------
     integer      cycles = 0;
     integer      i;
-    reg [8*256:1] hexfile;
+    string hexfile;
+    string tracefile;
+    integer image_fd;
 
     initial begin
         if (!$value$plusargs("HEX=%s", hexfile))
-    hexfile = "C:/Users/Bmars/Desktop/riskyC1_MC/reference/riskyC1-mc/tests/addi.hex";
+            hexfile = "tests/addi.hex";
+        image_fd = $fopen(hexfile, "r");
+        if (image_fd == 0) $fatal(1, "Cannot open image: %s", hexfile);
+        $fclose(image_fd);
+        if ($value$plusargs("TRACE=%s", tracefile)) begin
+            $dumpfile(tracefile);
+            $dumpvars(0, core_mc_tb);
+        end
         for (i = 0; i < WORDS; i = i + 1) ram[i] = 32'h0;
         $readmemh(hexfile, ram);
 
         repeat (4) @(posedge clk);
+        @(negedge clk);
         rst = 0;
 
         while (!done && cycles < TIMEOUT) begin
@@ -98,6 +108,7 @@ module core_mc_tb;
             $display("FAIL    %0s  testnum=%c%c", hexfile, c1, c2);
         else
             $display("PASS    %0s  (%0d cycles)", hexfile, cycles);
+        if (!done || failed) $fatal(1, "Simulation failed");
         $finish;
     end
 endmodule

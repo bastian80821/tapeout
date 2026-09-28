@@ -65,7 +65,7 @@ module alu (
     assign shift_src = (ctrl == ALU_SLL) ? rev32(a) : a;
     assign sign_fill = (ctrl == ALU_SRA) ? shift_src[31] : 1'b0;
     assign shift_ext = $signed({sign_fill, shift_src});
-    assign shifted   = shift_ext >>> shamt;   // bit 32 replicates: sign for SRA,
+    assign shifted   = 32'(shift_ext >>> shamt);   // bit 32 replicates: sign for SRA,
                                               // zero for SRL and SLL
 
     // ---------------- output select ----------------

@@ -11,3 +11,4 @@ xsim.dir/
 .Xil/
 a.out
 *.vvp
+sim/obj_dir/

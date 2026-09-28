@@ -70,7 +70,7 @@ module soc #(
     logic [3:0]  core_wstrb;
     logic [31:0] mem_rdata;
 
-    core_mc #(.NREGS(NREGS)) u_core (
+    core #(.NREGS(NREGS)) u_core (
         .clk(clk),
         .rst(~core_run),                 // held in reset until the program lands
         .mem_en(core_en), .mem_addr(core_addr), .mem_wdata(core_wdata),

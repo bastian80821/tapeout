@@ -50,7 +50,7 @@ module uart_rx #(
                 end
                 START: begin
                     // wait half a bit-time, then confirm we're still low
-                    if (cycle_cnt == HALF_BIT - 1) begin
+                    if (32'(cycle_cnt) == HALF_BIT - 1) begin
                         if (!rx_sync2) begin  // genuine start bit, not a glitch
                             cycle_cnt <= '0;
                             bit_idx   <= '0;
@@ -61,7 +61,7 @@ module uart_rx #(
                         cycle_cnt <= cycle_cnt + 1;
                 end
                 DATA: begin
-                    if (cycle_cnt == CYCLES_PER_BIT - 1) begin
+                    if (32'(cycle_cnt) == CYCLES_PER_BIT - 1) begin
                         cycle_cnt          <= '0;
                         shift_reg[bit_idx] <= rx_sync2;   // sample mid-bit, LSB first
                         if (bit_idx == 3'd7)
@@ -72,7 +72,7 @@ module uart_rx #(
                         cycle_cnt <= cycle_cnt + 1;
                 end
                 STOP: begin
-                    if (cycle_cnt == CYCLES_PER_BIT - 1) begin
+                    if (32'(cycle_cnt) == CYCLES_PER_BIT - 1) begin
                         cycle_cnt <= '0;
                         rx_data   <= shift_reg;
                         rx_valid  <= 1'b1;    // byte complete

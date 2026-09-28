@@ -40,13 +40,13 @@ module soc_tb;
         integer i;
         begin
             rx_pin = 1'b0;                      // start bit
-            repeat (CPB) @(posedge clk);
+            repeat (CPB) @(negedge clk);
             for (i = 0; i < 8; i = i + 1) begin
                 rx_pin = b[i];                  // LSB first
-                repeat (CPB) @(posedge clk);
+                repeat (CPB) @(negedge clk);
             end
             rx_pin = 1'b1;                      // stop bit
-            repeat (CPB) @(posedge clk);
+            repeat (CPB) @(negedge clk);
         end
     endtask
 
@@ -71,12 +71,21 @@ module soc_tb;
 
     // ---------------- load the image and run ----------------
     reg [31:0] img [0:MEM_WORDS-1];
-    reg [8*256:1] hexfile;
+    string hexfile;
+    string tracefile;
+    integer image_fd;
     integer nwords, i, cycles;
 
     initial begin
         if (!$value$plusargs("HEX=%s", hexfile))
-        hexfile = "C:/Users/Bmars/Desktop/riskyC1_MC/reference/riskyC1-mc/tests/rv32e_test.hex";
+            hexfile = "tests/rv32e_test.hex";
+        image_fd = $fopen(hexfile, "r");
+        if (image_fd == 0) $fatal(1, "Cannot open image: %s", hexfile);
+        $fclose(image_fd);
+        if ($value$plusargs("TRACE=%s", tracefile)) begin
+            $dumpfile(tracefile);
+            $dumpvars(0, soc_tb);
+        end
         for (i = 0; i < MEM_WORDS; i = i + 1) img[i] = 32'hFFFF_FFFF;
         $readmemh(hexfile, img);
 
@@ -86,9 +95,11 @@ module soc_tb;
             if (img[i] !== 32'hFFFF_FFFF) nwords = i + 1;
 
         repeat (10) @(posedge clk);
+        @(negedge clk);
         rst = 0;
         repeat (10) @(posedge clk);
 
+        @(negedge clk);
         // word count, little-endian
         send_byte(nwords[7:0]);
         send_byte(nwords[15:8]);
@@ -104,7 +115,7 @@ module soc_tb;
 
         if (!core_run) begin
             $display("FAIL    %0s  bootloader did not release the core", hexfile);
-            $finish;
+            $fatal(1, "Boot failed");
         end
 
         cycles = 0;
@@ -121,6 +132,7 @@ module soc_tb;
                      hexfile, nwords, got[0]);
         else
             $display("FAIL    %0s  first char '%c' (0x%02x)", hexfile, got[0], got[0]);
+        if (ngot == 0 || got[0] != "P") $fatal(1, "Simulation failed");
         $finish;
     end
 endmodule

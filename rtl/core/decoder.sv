@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 module decoder(
-    input logic [31:0] inst,
+    input  logic [31:0] inst,
     output logic [6:0] opc,
     output logic [4:0] rd,
     output logic [4:0] rs1,
@@ -11,27 +11,26 @@ module decoder(
     output logic reg_write,
     output logic [2:0] imm_sel,
     output logic [3:0] alu_op,
-    output logic  alu_src,
+    output logic alu_src,
     output logic branch,
     output logic jmp,
     output logic jmpr,
     output logic mem_read,
     output logic mem_write,
-    output logic        lui,
-    output logic        auipc
+    output logic lui,
+    output logic auipc
 
 );
 
     //field extraction from instruction
-    assign opc = inst[6:0];
-    assign rd  = inst[11:7];
+    assign opc   = inst[6:0];
+    assign rd    = inst[11:7];
     assign func3 = inst[14:12];
     assign func7 = inst[31:25];
-    assign rs1 = inst[19:15];
-    assign rs2 = inst[24:20];
+    assign rs1   = inst[19:15];
+    assign rs2   = inst[24:20];
     
     always_comb begin
-    
         // defaults - every control signal gets a safe value
         reg_write = 1'b0;
         alu_src   = 1'b0;
@@ -42,8 +41,8 @@ module decoder(
         jmpr      = 1'b0;
         mem_read  = 1'b0;
         mem_write = 1'b0;
-        lui   = 1'b0;
-        auipc = 1'b0;
+        lui       = 1'b0;
+        auipc     = 1'b0;
         
         case (opc)
         7'b0110011: begin   // R-type, use func7 and func3 to decode instruction
@@ -82,21 +81,21 @@ module decoder(
         
         7'b0000011: begin //load memory -> reg
             reg_write = 1'b1;
-            alu_src = 1'b1;
-            imm_sel = 3'd0;
-            mem_read = 1'b1;
+            alu_src   = 1'b1;
+            imm_sel   = 3'd0;
+            mem_read  = 1'b1;
             
         end
         
         7'b0100011: begin //store reg->mem
-            alu_src = 1'b1;
-            imm_sel = 3'd1;
+            alu_src   = 1'b1;
+            imm_sel   = 3'd1;
             mem_write = 1'b1;
         end
         
         7'b1100011: begin //branch
             imm_sel = 3'd2;
-            branch = 1'd1;
+            branch  = 1'd1;
         end
         
         7'b0110111: begin  // Load upper immediate
@@ -107,15 +106,15 @@ module decoder(
         
         7'b1101111: begin //jump and link
             reg_write = 1'b1;
-            imm_sel = 3'd4;
-            jmp = 1'd1;
+            imm_sel   = 3'd4;
+            jmp       = 1'd1;
             
         end
         
         7'b1100111: begin //jump and link register
             reg_write = 1'b1;
-            imm_sel = 3'd0;
-            jmpr = 1'd1;           
+            imm_sel   = 3'd0;
+            jmpr      = 1'd1;           
         end
         
         7'b0010111: begin  // AUIPC

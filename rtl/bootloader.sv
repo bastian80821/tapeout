@@ -33,8 +33,10 @@ module bootloader (
     logic [31:0] full_word;
     assign full_word = {rx_data, word_buf[31:8]};
 
-    assign loading  = (state != DONE);
-    assign core_run = (state == DONE);
+    // The registered write strobe commits on the following clock edge. Keep
+    // ownership of memory and hold the core in reset through the final write.
+    assign loading  = (state != DONE) || imem_we;
+    assign core_run = (state == DONE) && !imem_we;
 
     always_ff @(posedge clk) begin
         if (rst) begin

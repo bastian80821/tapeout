@@ -19,7 +19,7 @@
 //
 // Cycles per instruction: 3 for ALU, branch and jump; 4 for stores; 5 for loads.
 //
-module core_mc #(
+module core #(
     parameter int NREGS = 16
 ) (
     input  logic        clk,

@@ -12,3 +12,12 @@ xsim.dir/
 a.out
 *.vvp
 sim/obj_dir/
+
+# Vivado project
+*.xpr
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.runs/
+*.gen/

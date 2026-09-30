@@ -1,23 +1,24 @@
 `timescale 1ns / 1ps
-// Hardware bootloader: receives a program over UART and writes it into both
-// instruction and data memory, then releases the core.
+// Hardware bootloader: receives a program over UART, writes it into the shared
+// memory one word per bus write, then releases the cores.
 //
 // Protocol (host -> board), little-endian:
 //   1. 4 bytes : word count N
-//   2. N*4 bytes : the program, one 32-bit instruction per 4 bytes
+//   2. N*4 bytes : the memory image, one 32-bit word per 4 bytes, written
+//                  from address 0
 //
 // The bootloader keeps listening after a program has been loaded. Four more
 // bytes arriving are interpreted as a new word count, which drops core_run
-// (resetting the core) and starts a fresh load. That makes it possible to run
+// (resetting the cores) and starts a fresh load. That makes it possible to run
 // a suite of test programs back to back without touching the reset button.
 module bootloader (
     input  logic        clk,
     input  logic        rst,
     input  logic [7:0]  rx_data,
     input  logic        rx_valid,
-    output logic        imem_we,
-    output logic [31:0] imem_waddr,
-    output logic [31:0] imem_wdata,
+    output logic        boot_req,      // one-cycle write pulse per word
+    output logic [12:0] boot_addr,     // byte address, word aligned
+    output logic [31:0] boot_wdata,
     output logic        core_run,      // high once loading is complete
     output logic        loading        // high while receiving
 );
@@ -34,9 +35,9 @@ module bootloader (
     assign full_word = {rx_data, word_buf[31:8]};
 
     // The registered write strobe commits on the following clock edge. Keep
-    // ownership of memory and hold the core in reset through the final write.
-    assign loading  = (state != DONE) || imem_we;
-    assign core_run = (state == DONE) && !imem_we;
+    // ownership of memory and hold the cores in reset through the final write.
+    assign loading  = (state != DONE) || boot_req;
+    assign core_run = (state == DONE) && !boot_req;
 
     always_ff @(posedge clk) begin
         if (rst) begin
@@ -45,11 +46,11 @@ module bootloader (
             word_buf   <= '0;
             word_count <= '0;
             words_got  <= '0;
-            imem_we    <= 1'b0;
-            imem_waddr <= '0;
-            imem_wdata <= '0;
+            boot_req    <= 1'b0;
+            boot_addr <= '0;
+            boot_wdata <= '0;
         end else begin
-            imem_we <= 1'b0;
+            boot_req <= 1'b0;
 
             if (rx_valid) begin
                 word_buf <= full_word;
@@ -63,9 +64,9 @@ module bootloader (
                             state      <= GET_PROG;
                         end
                         GET_PROG: begin
-                            imem_we    <= 1'b1;
-                            imem_waddr <= words_got << 2;
-                            imem_wdata <= full_word;
+                            boot_req    <= 1'b1;
+                            boot_addr <= 13'(words_got << 2);
+                            boot_wdata <= full_word;
                             words_got  <= words_got + 1;
                             if (words_got + 1 == word_count)
                                 state <= DONE;

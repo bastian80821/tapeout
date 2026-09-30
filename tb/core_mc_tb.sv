@@ -5,6 +5,13 @@
 // Select the image with the plusarg +HEX=<path>. Select the ISA with the
 // NREGS parameter (16 = RV32E, 32 = RV32I).
 //
+// Both core ports are served from one memory. Each request is granted after a
+// random delay of 0 to MAXDELAY cycles (plusarg +MAXDELAY=<n>, default 3), and
+// read data arrives the cycle after the grant, as on the real bus.
+//
+// +FETCHTRACE=<file> writes the address of every instruction fetch, one hex
+// value per line, for replay in icache_tb.
+//
 // Memory map
 //   0x0000 - 0x0FFF   RAM, 1024 words, synchronous read
 //   0x1000            UART data   (write: transmit the low byte)
@@ -22,15 +29,18 @@ module core_mc_tb;
     reg clk = 0, rst = 1;
     always #5 clk = ~clk;
 
-    wire        mem_en, retire;
-    wire [31:0] mem_addr, mem_wdata, retire_pc;
-    wire [3:0]  mem_wstrb;
-    reg  [31:0] mem_rdata;
+    wire        i_req, d_req, retire;
+    wire [12:0] i_addr, d_addr;
+    wire [31:0] d_wdata, retire_pc;
+    wire [3:0]  d_wstrb;
+    wire        i_valid, d_gnt;
+    reg  [31:0] i_rdata, d_rdata;
 
     core #(.NREGS(NREGS)) dut (
         .clk(clk), .rst(rst),
-        .mem_en(mem_en), .mem_addr(mem_addr), .mem_wdata(mem_wdata),
-        .mem_wstrb(mem_wstrb), .mem_rdata(mem_rdata),
+        .i_req(i_req), .i_addr(i_addr), .i_valid(i_valid), .i_rdata(i_rdata),
+        .d_req(d_req), .d_addr(d_addr), .d_wdata(d_wdata), .d_wstrb(d_wstrb),
+        .d_gnt(d_gnt), .d_rdata(d_rdata),
         .retire(retire), .retire_pc(retire_pc)
     );
 
@@ -38,20 +48,49 @@ module core_mc_tb;
     localparam integer WORDS = 1024;
     reg [31:0] ram [0:WORDS-1];
 
-    wire [9:0]  widx     = mem_addr[11:2];
-    wire        sel_ram  = (mem_addr < (WORDS*4));
-    wire        sel_uart = (mem_addr >= 32'h1000) && (mem_addr < 32'h2000);
-    reg  [31:0] wmask;
+    integer maxdelay;
+    integer i_delay = 0, d_delay = 0;
+    reg     i_wait = 0;                  // grant given, i_valid this cycle
+
+    // Instruction port: one grant per fetch, i_valid the cycle after.
+    wire i_gnt = i_req && !i_wait && (i_delay == 0);
+    assign i_valid = i_wait;
 
     always @(posedge clk) begin
-        if (mem_en && sel_ram) begin
+        if (rst) begin
+            i_wait  <= 0;
+            i_delay <= 0;
+        end else if (i_wait) begin
+            i_wait  <= 0;
+            i_delay <= $urandom_range(0, maxdelay);
+        end else if (i_gnt) begin
+            i_wait  <= 1;
+            i_rdata <= ram[i_addr[11:2]];
+        end else if (i_req) begin
+            i_delay <= i_delay - 1;
+        end
+    end
+
+    // Data port: d_gnt accepts the access, read data the cycle after.
+    wire        sel_ram  = !d_addr[12];
+    wire        sel_uart =  d_addr[12];
+    wire [9:0]  widx     = d_addr[11:2];
+    reg  [31:0] wmask;
+    assign d_gnt = d_req && (d_delay == 0);
+
+    always @(posedge clk) begin
+        if (rst) d_delay <= 0;
+        else if (d_gnt) d_delay <= $urandom_range(0, maxdelay);
+        else if (d_req) d_delay <= d_delay - 1;
+
+        if (d_gnt && sel_ram) begin
             // Byte strobes as a mask (avoids part-select on a variable index).
-            wmask = {{8{mem_wstrb[3]}}, {8{mem_wstrb[2]}},
-                     {8{mem_wstrb[1]}}, {8{mem_wstrb[0]}}};
-            ram[widx] <= (ram[widx] & ~wmask) | (mem_wdata & wmask);
-            mem_rdata <= ram[widx];
-        end else if (mem_en && sel_uart) begin
-            mem_rdata <= 32'd0;          // UART status: never busy
+            wmask = {{8{d_wstrb[3]}}, {8{d_wstrb[2]}},
+                     {8{d_wstrb[1]}}, {8{d_wstrb[0]}}};
+            ram[widx] <= (ram[widx] & ~wmask) | (d_wdata & wmask);
+            d_rdata   <= ram[widx];
+        end else if (d_gnt && sel_uart) begin
+            d_rdata <= 32'd0;            // UART status: never busy
         end
     end
 
@@ -62,16 +101,26 @@ module core_mc_tb;
     integer    nchar  = 0;
 
     always @(posedge clk) begin
-        if (!rst && mem_en && sel_uart && (mem_wstrb != 4'b0000)
-                 && (mem_addr[11:0] == 12'h000)) begin
-            if      (nchar == 0) c0 = mem_wdata[7:0];
-            else if (nchar == 1) c1 = mem_wdata[7:0];
-            else if (nchar == 2) c2 = mem_wdata[7:0];
+        if (!rst && d_gnt && sel_uart && (d_wstrb != 4'b0000)
+                 && (d_addr[11:0] == 12'h000)) begin
+            if      (nchar == 0) c0 = d_wdata[7:0];
+            else if (nchar == 1) c1 = d_wdata[7:0];
+            else if (nchar == 2) c2 = d_wdata[7:0];
             nchar = nchar + 1;
-            if (mem_wdata[7:0] == "P") done = 1;
+            if (d_wdata[7:0] == "P") done = 1;
             if (c0 == "F" && nchar >= 3) begin done = 1; failed = 1; end
         end
     end
+
+    // ---------------- fetch trace ----------------
+    integer fetch_fd = 0;
+    string  fetchfile;
+    initial if ($value$plusargs("FETCHTRACE=%s", fetchfile)) fetch_fd = $fopen(fetchfile, "w");
+    always @(posedge clk)
+        if (fetch_fd != 0 && !rst && i_valid) begin
+            $fwrite(fetch_fd, "%h\n", i_addr);
+            $fflush(fetch_fd);
+        end
 
     // ---------------- run ----------------
     integer      cycles = 0;
@@ -81,6 +130,8 @@ module core_mc_tb;
     integer image_fd;
 
     initial begin
+        if (!$value$plusargs("MAXDELAY=%d", maxdelay))
+            maxdelay = 3;
         if (!$value$plusargs("HEX=%s", hexfile))
             hexfile = "tests/addi.hex";
         image_fd = $fopen(hexfile, "r");

@@ -18,7 +18,7 @@ pass=0; fail=0; failed=""
 for h in $(ls "$ROOT"/tests/*.hex | sort); do
   b=$(basename "$h" .hex)
   [ -n "$ONLY" ] && [ "$b" != "$ONLY" ] && continue
-  r=$(timeout 180 vvp "$OUT" +HEX="$h" 2>/dev/null | grep -E "^(PASS|FAIL|TIMEOUT)")
+  r=$(timeout 180 vvp "$OUT" +HEX="$h" ${VVP_ARGS:-} 2>/dev/null | grep -E "^(PASS|FAIL|TIMEOUT)")
   printf "%s\n" "$r"
   case "$r" in PASS*) pass=$((pass+1));; *) fail=$((fail+1)); failed="$failed $b";; esac
 done

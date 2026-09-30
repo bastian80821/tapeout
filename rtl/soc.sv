@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 //
-// riskyC1-MC SoC : core, unified memory, bootloader and memory-mapped UART.
+// Single-core SoC: core, unified memory, bootloader and memory-mapped UART.
+// Full-system reference for the core; the dual-core chip is soc_top.
 //
 // Parameters
 //   NREGS      16 = RV32E (default), 32 = RV32I.
@@ -24,8 +25,8 @@
 // Memory arbitration
 //   Two requesters: the bootloader while loading, the core afterwards. They are
 //   mutually exclusive by construction, since the core is held in reset until
-//   loading completes, so no round-robin arbiter is needed here. The dual-core
-//   version replaces this mux with a real arbiter and adds the second core.
+//   loading completes. The core's two ports are never active in the same
+//   cycle, so both are granted immediately.
 //
 module soc #(
     parameter int NREGS     = 16,
@@ -55,28 +56,49 @@ module soc #(
     );
 
     logic        boot_we, loading;
+    logic [12:0] boot_addr;
     logic [31:0] boot_waddr, boot_wdata;
 
     bootloader u_boot (
         .clk(clk), .rst(rst),
         .rx_data(rx_data), .rx_valid(rx_valid),
-        .imem_we(boot_we), .imem_waddr(boot_waddr), .imem_wdata(boot_wdata),
+        .boot_req(boot_we), .boot_addr(boot_addr), .boot_wdata(boot_wdata),
         .core_run(core_run), .loading(loading)
     );
 
+    assign boot_waddr = {19'd0, boot_addr};
+
     // ---------------- core ----------------
-    logic        core_en;
-    logic [31:0] core_addr, core_wdata;
-    logic [3:0]  core_wstrb;
+    logic        i_req, i_valid, d_req, d_gnt;
+    logic [12:0] i_addr, d_addr;
+    logic [31:0] d_wdata;
+    logic [3:0]  d_wstrb;
     logic [31:0] mem_rdata;
 
     core #(.NREGS(NREGS)) u_core (
         .clk(clk),
         .rst(~core_run),                 // held in reset until the program lands
-        .mem_en(core_en), .mem_addr(core_addr), .mem_wdata(core_wdata),
-        .mem_wstrb(core_wstrb), .mem_rdata(mem_rdata),
+        .i_req(i_req), .i_addr(i_addr), .i_valid(i_valid), .i_rdata(mem_rdata),
+        .d_req(d_req), .d_addr(d_addr), .d_wdata(d_wdata), .d_wstrb(d_wstrb),
+        .d_gnt(d_gnt), .d_rdata(mem_rdata),
         .retire(retire), .retire_pc(retire_pc)
     );
+
+    // Fetch: issue the read once, return the word the next cycle.
+    logic i_issue, i_wait;
+    assign i_issue = i_req & ~i_wait;
+    assign i_valid = i_wait;
+    always_ff @(posedge clk) i_wait <= ~core_run ? 1'b0 : i_issue;
+
+    assign d_gnt = d_req;
+
+    logic        core_en;
+    logic [31:0] core_addr, core_wdata;
+    logic [3:0]  core_wstrb;
+    assign core_en    = i_issue | d_req;
+    assign core_addr  = {19'd0, d_req ? d_addr : i_addr};
+    assign core_wdata = d_wdata;
+    assign core_wstrb = d_req ? d_wstrb : 4'b0000;
 
     // ---------------- request mux ----------------
     logic        req_en;

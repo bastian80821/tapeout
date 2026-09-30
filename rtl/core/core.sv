@@ -5,19 +5,25 @@
 // Parameters
 //   NREGS   16 = RV32E (default), 32 = RV32I.
 //
-// Memory interface
-//   Single port, byte-addressed, SYNCHRONOUS read: mem_rdata is valid the cycle
-//   after mem_en is asserted. mem_wstrb = 0 indicates a read.
+// Instruction port
+//   i_req    high in S_FETCH. i_addr = pc[12:0], stable while i_req is high.
+//   i_valid  the instruction is on i_rdata this cycle; latched into IR.
+//
+// Data port, byte-addressed, 13-bit address
+//   d_req    high in S_MEM. d_addr, d_wdata, d_wstrb are stable while d_req is
+//            high. d_addr is word aligned; d_wstrb selects the bytes and is
+//            0000 for a load.
+//   d_gnt    the access was accepted this cycle. A store is then complete; a
+//            load's data is on d_rdata in the following cycle (S_MEM_W).
+//   Misaligned accesses are not supported: the address is rounded down to the
+//   word, so software must not issue them.
 //
 // FSM
-//   S_FETCH    present PC
-//   S_FETCH_W  instruction valid on mem_rdata, latched into IR
+//   S_FETCH    present PC, wait for i_valid, latch IR
 //   S_EXEC     decode, register read, ALU. Non-memory instructions write back
 //              and update the PC here
-//   S_MEM      present the data address; stores complete here
-//   S_MEM_W    load data valid on mem_rdata, written back here
-//
-// Cycles per instruction: 3 for ALU, branch and jump; 4 for stores; 5 for loads.
+//   S_MEM      present the data access, wait for d_gnt; stores complete here
+//   S_MEM_W    load data valid on d_rdata, written back here
 //
 module core #(
     parameter int NREGS = 16
@@ -25,19 +31,26 @@ module core #(
     input  logic        clk,
     input  logic        rst,
 
-    // Synchronous memory port. rdata is valid one cycle after en is asserted.
-    output logic        mem_en,
-    output logic [31:0] mem_addr,     // BYTE address
-    output logic [31:0] mem_wdata,
-    output logic [3:0]  mem_wstrb,    // 0 = read
-    input  logic [31:0] mem_rdata,
+    // Instruction port
+    output logic        i_req,
+    output logic [12:0] i_addr,
+    input  logic        i_valid,
+    input  logic [31:0] i_rdata,
+
+    // Data port
+    output logic        d_req,
+    output logic [12:0] d_addr,       // BYTE address, word aligned
+    output logic [31:0] d_wdata,
+    output logic [3:0]  d_wstrb,      // 0 = read
+    input  logic        d_gnt,
+    input  logic [31:0] d_rdata,
 
     // Observability: pulses high for one cycle as each instruction completes.
     output logic        retire,
     output logic [31:0] retire_pc
 );
     typedef enum logic [2:0] {
-        S_FETCH, S_FETCH_W, S_EXEC, S_MEM, S_MEM_W
+        S_FETCH, S_EXEC, S_MEM, S_MEM_W
     } state_e;
 
     state_e      state;
@@ -103,7 +116,7 @@ module core #(
     mem_access u_mem_access (
         .func3(func3), .addr_lo(alu_result[1:0]), .mem_write(mem_write),
         .store_data(rs2_data), .w_data(st_wdata), .w_strb(st_wstrb),
-        .raw_rdata(mem_rdata), .load_data(load_data)
+        .raw_rdata(d_rdata), .load_data(load_data)
     );
 
     // ---------------- next PC ----------------
@@ -124,33 +137,21 @@ module core #(
         else                 wb_data = alu_result;
     end
 
-    // ---------------- memory port ----------------
-    always_comb begin
-        mem_en    = 1'b0;
-        mem_addr  = 32'd0;
-        mem_wdata = 32'd0;
-        mem_wstrb = 4'b0000;
-        case (state)
-            S_FETCH: begin
-                mem_en   = 1'b1;
-                mem_addr = pc;
-            end
-            S_MEM: begin
-                mem_en    = 1'b1;
-                mem_addr  = {alu_result[31:2], 2'b00};
-                mem_wdata = st_wdata;
-                mem_wstrb = mem_write ? st_wstrb : 4'b0000;
-            end
-            default: ;
-        endcase
-    end
+    // ---------------- memory ports ----------------
+    assign i_req   = (state == S_FETCH);
+    assign i_addr  = pc[12:0];
+
+    assign d_req   = (state == S_MEM);
+    assign d_addr  = {alu_result[12:2], 2'b00};
+    assign d_wdata = st_wdata;
+    assign d_wstrb = mem_write ? st_wstrb : 4'b0000;
 
     // Register write: EXEC for ALU-class instructions, MEM_W for loads.
     assign rf_we = reg_write & ( (state == S_EXEC && !mem_read && !mem_write)
                                | (state == S_MEM_W) );
 
     assign retire    = (state == S_EXEC && !mem_read && !mem_write)
-                     | (state == S_MEM  &&  mem_write)
+                     | (state == S_MEM  &&  mem_write && d_gnt)
                      | (state == S_MEM_W);
     assign retire_pc = pc;
 
@@ -162,13 +163,12 @@ module core #(
             ir    <= 32'd0;
         end else begin
             case (state)
-                S_FETCH:   state <= S_FETCH_W;
-                S_FETCH_W: begin ir <= mem_rdata; state <= S_EXEC; end
+                S_FETCH: if (i_valid) begin ir <= i_rdata; state <= S_EXEC; end
                 S_EXEC: begin
                     if (mem_read | mem_write) state <= S_MEM;
                     else begin pc <= next_pc; state <= S_FETCH; end
                 end
-                S_MEM: begin
+                S_MEM: if (d_gnt) begin
                     if (mem_read) state <= S_MEM_W;
                     else begin pc <= next_pc; state <= S_FETCH; end
                 end

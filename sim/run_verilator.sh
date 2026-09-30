@@ -25,15 +25,20 @@ done
 command -v verilator >/dev/null || { echo "Verilator 5+ is required; run nix develop first." >&2; exit 2; }
 command -v timeout >/dev/null || { echo "GNU timeout is required." >&2; exit 2; }
 
+CORE_SRC=("$ROOT"/rtl/core/*.sv "$ROOT/rtl/mem/mem_access.sv")
+case "$TOP" in
+    core_mc_tb) SRC=("${CORE_SRC[@]}") ;;
+    soc_tb)     SRC=("${CORE_SRC[@]}" "$ROOT/rtl/soc.sv" "$ROOT/rtl/bootloader.sv"
+                     "$ROOT/rtl/mem/sram_mem.sv" "$ROOT"/rtl/periph/uart_*.sv) ;;
+esac
+
 # Keep generated C++, executable, build output and individual test logs together.
 BUILD="$ROOT/sim/obj_dir/${TOP}_${NREGS}"
 mkdir -p "$BUILD"
 echo "Building $TOP (NREGS=$NREGS)..."
 if ! verilator --binary --timing --trace --top-module "$TOP" \
     "-GNREGS=$NREGS" --Mdir "$BUILD" -o simulator -j "${JOBS:-2}" \
-    "$ROOT"/rtl/*.sv "$ROOT"/rtl/core/*.sv \
-    "$ROOT"/rtl/mem/*.sv "$ROOT"/rtl/periph/*.sv \
-    "$ROOT/tb/$TOP.sv" >"$BUILD/build.log" 2>&1; then
+    "${SRC[@]}" "$ROOT/tb/$TOP.sv" >"$BUILD/build.log" 2>&1; then
     cat "$BUILD/build.log" >&2
     exit 1
 fi

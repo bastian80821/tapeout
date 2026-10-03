@@ -26,6 +26,7 @@ Everything goes through `make`, and CI runs the same targets, so a clean
 make env                     # check your tools
 make lint                    # verilator -Wall on the single-core soc
 make synth                   # generic yosys synthesis check (no PDK needed)
+make synth-full              # also run ABC gate optimization
 make check-top               # elaborate the dual-core soc_top at both RAM plans
 make test                    # core and SoC program tests at NREGS=16
 make test-core NREGS=32      # core only, 32 registers
@@ -65,10 +66,22 @@ it to pass.
 Every push to `main` and every pull request runs `.github/workflows/ci.yml`:
 environment check, lint, synthesis check, the `soc_top` elaboration check,
 core and SoC tests at 16 and 32 registers, and the gated unit testbenches,
-inside `nix develop .#ci`. All unit testbenches also run in an informational
-step that can't fail the build. Logs are uploaded when a step fails. The
+inside `nix develop .#ci`. Unfinished unit testbenches run only when requested
+with `make test-unit`. CI prints check summaries and failure diagnostics without
+uploading log artifacts. The
 physical-implementation flow (LibreLane) is not in CI; it runs at milestones
 against tagged RTL.
+
+Synthesis runs in a separate job alongside the lint and simulation job. The
+default `make synth` skips ABC gate optimization while retaining RTL synthesis,
+memory and gate lowering, and netlist checks. `make synth-full` includes ABC.
+Both use 16-word RAM for the generic check and limit each
+register configuration to two minutes. Override `SYNTH_TIMEOUT` for longer
+local investigations. Synthesis prints one result per configuration. Simulation
+prints suite totals and captures output temporarily to validate results and show
+failure details; it does not save build or per-test logs.
+The workflow can also be started manually. Repository rules should require both
+the `synthesis` and `toolchain-a` jobs before merging.
 
 ### Vivado
 

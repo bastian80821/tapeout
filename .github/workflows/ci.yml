@@ -26,24 +26,10 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - name: Revision and synthesis tool version
-        run: |
-          git rev-parse HEAD
-          nix develop .#ci --command yosys -V
-
       # Independent of simulation so a synthesis failure cannot skip its tests.
       - name: Synthesis check (without ABC gate optimization)
         timeout-minutes: 5
         run: nix develop .#ci --command make synth
-
-      - name: Upload synthesis reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: synthesis-reports
-          path: build/synth/
-          if-no-files-found: ignore
-          retention-days: 7
 
   toolchain-a:
     runs-on: ubuntu-24.04
@@ -53,11 +39,8 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - name: Tool versions and environment check
-        run: |
-          git rev-parse HEAD
-          nix develop .#ci --command bash -c 'verilator --version; iverilog -V | head -1; yosys -V'
-          nix develop .#ci --command ./tools/check_env.sh
+      - name: Environment check
+        run: nix develop .#ci --command make env
 
       - name: Lint (verilator -Wall)
         run: nix develop .#ci --command make lint
@@ -79,20 +62,3 @@ jobs:
 
       - name: Unit testbenches with real checks (UNIT_GATED)
         run: nix develop .#ci --command make test-unit-gated
-
-      # Every unit testbench, including ones still marked "no checks written
-      # yet". Shown for information; a failure here doesn't fail the run.
-      - name: All unit testbenches (informational)
-        continue-on-error: true
-        run: nix develop .#ci --command make test-unit
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs
-          path: |
-            sim/obj_dir/*/*.log
-            build/
-          if-no-files-found: ignore
-          retention-days: 7

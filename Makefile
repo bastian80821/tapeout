@@ -16,7 +16,6 @@ TEST  ?= all
 BLOCK ?= all
 SYNTH_FLAGS ?= -noabc
 SYNTH_TIMEOUT ?= 120s
-SYNTH_REPORT ?= check
 
 # Unit testbenches with real checks. A block's testbench prints "no checks
 # written yet" until its owner writes them; add the block here at that point
@@ -44,7 +43,7 @@ help:
 	@echo "make clean                remove build outputs"
 
 env:
-	./tools/check_env.sh
+	@./tools/check_env.sh --quiet
 
 # Strict lint covers the single-core soc, which contains the core, memory,
 # bootloader and UART. The dual-core soc_top still wires up stub blocks, so it
@@ -60,39 +59,35 @@ lint:
 # loops and unsynthesisable constructs. MEM_WORDS is shrunk because the
 # behavioural RAM would otherwise become thousands of flip-flops; on silicon
 # that memory is an SRAM macro, not logic. PR checks skip ABC gate optimization;
-# synth-full retains that flow for inspecting optimized cell counts.
-# Bound each tool process and print its passes so a stalled run is diagnosable.
+# synth-full retains that flow. Bound each tool process and report failures.
 synth:
-	@mkdir -p $(BUILD)/synth/$(SYNTH_REPORT)
 	@for n in 16 32; do \
-	  echo "yosys synthesis, NREGS=$$n, MEM_WORDS=16, flags=$(SYNTH_FLAGS), timeout=$(SYNTH_TIMEOUT)"; \
 	  status=0; \
-	  timeout --kill-after=10s $(SYNTH_TIMEOUT) yosys -l $(BUILD)/synth/$(SYNTH_REPORT)/soc_$$n.log -p " \
+	  timeout --kill-after=10s $(SYNTH_TIMEOUT) yosys -Q -q -p " \
 	    read_verilog -sv -DSYNTHESIS $(RTL); \
 	    chparam -set NREGS $$n -set MEM_WORDS 16 soc; \
 	    hierarchy -top soc -check; \
 	    proc; opt; check -assert; \
-	    synth -top soc $(SYNTH_FLAGS); check -assert; \
-	    tee -q -o $(BUILD)/synth/$(SYNTH_REPORT)/soc_$$n.stat stat" || status=$$?; \
+	    synth -top soc $(SYNTH_FLAGS); check -assert" || status=$$?; \
 	  if [ "$$status" -ne 0 ]; then \
 	    echo "synthesis failed, NREGS=$$n, exit=$$status (124 indicates timeout; 137 indicates forced termination)" >&2; \
 	    exit "$$status"; \
 	  fi; \
+	  echo "synthesis passed, NREGS=$$n"; \
 	done
-	@echo "synthesis check clean (reports in $(BUILD)/synth/$(SYNTH_REPORT)/)"
 
 synth-full:
-	$(MAKE) --no-print-directory synth SYNTH_FLAGS= SYNTH_REPORT=full
+	@$(MAKE) --no-print-directory synth SYNTH_FLAGS=
 
 # Bastian's elaboration check of soc_top at both RAM plans (RAW=10 and 11).
 check-top:
-	./sim/check_top.sh
+	@./sim/check_top.sh
 
 test-core:
-	./sim/run_verilator.sh $(NREGS) $(TEST)
+	@./sim/run_verilator.sh $(NREGS) $(TEST)
 
 test-soc:
-	./sim/run_soc.sh $(TEST) $(NREGS)
+	@./sim/run_soc.sh $(TEST) $(NREGS)
 
 test: test-core test-soc
 
@@ -103,7 +98,7 @@ test-all:
 	done
 
 test-unit:
-	./sim/run_unit.sh $(BLOCK)
+	@./sim/run_unit.sh $(BLOCK)
 
 test-unit-gated:
 	@if [ -z "$(strip $(UNIT_GATED))" ]; then \
@@ -114,10 +109,10 @@ test-unit-gated:
 
 waves:
 	@if [ "$(TEST)" = all ]; then echo "usage: make waves TEST=<name> [NREGS=16|32]"; exit 2; fi
-	TRACE=1 ./sim/run_verilator.sh $(NREGS) $(TEST)
+	@TRACE=1 ./sim/run_verilator.sh $(NREGS) $(TEST)
 	@echo "open with: surfer sim/obj_dir/core_mc_tb_$(NREGS)/$(TEST).vcd"
 
-ci: lint synth check-top test-all test-unit-gated
+ci: env lint synth check-top test-all test-unit-gated
 
 clean:
 	rm -rf sim/obj_dir $(BUILD)

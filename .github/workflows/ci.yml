@@ -1,0 +1,64 @@
+# Toolchain A CI: runs the same make targets as a local `make ci`, with tool
+# versions pinned by flake.lock. Toolchain B (LibreLane) is deliberately not
+# here: it runs at milestones against tagged RTL, not on every push.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthesis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      # Independent of simulation so a synthesis failure cannot skip its tests.
+      - name: Synthesis check (without ABC gate optimization)
+        timeout-minutes: 5
+        run: nix develop .#ci --command make synth
+
+  toolchain-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Environment check
+        run: nix develop .#ci --command make env
+
+      - name: Lint (verilator -Wall)
+        run: nix develop .#ci --command make lint
+
+      - name: Dual-core top elaboration (check_top.sh)
+        run: nix develop .#ci --command make check-top
+
+      - name: Core tests, 16 registers
+        run: nix develop .#ci --command make test-core NREGS=16
+
+      - name: Core tests, 32 registers
+        run: nix develop .#ci --command make test-core NREGS=32
+
+      - name: SoC boot tests, 16 registers
+        run: nix develop .#ci --command make test-soc NREGS=16
+
+      - name: SoC boot tests, 32 registers
+        run: nix develop .#ci --command make test-soc NREGS=32
+
+      - name: Unit testbenches with real checks (UNIT_GATED)
+        run: nix develop .#ci --command make test-unit-gated

@@ -32,14 +32,16 @@ case "$TOP" in
                      "$ROOT/rtl/mem/sram_mem.sv" "$ROOT"/rtl/periph/uart_*.sv) ;;
 esac
 
-# Keep generated C++, executable, build output and individual test logs together.
+# Keep compiled simulators and requested waveforms; capture output temporarily
+# to validate results and show diagnostics only when a command fails.
 BUILD="$ROOT/sim/obj_dir/${TOP}_${NREGS}"
 mkdir -p "$BUILD"
-echo "Building $TOP (NREGS=$NREGS)..."
+OUTPUT=$(mktemp -d)
+trap 'rm -rf "$OUTPUT"' EXIT
 if ! verilator --binary --timing --trace --top-module "$TOP" \
     "-GNREGS=$NREGS" --Mdir "$BUILD" -o simulator -j "${JOBS:-2}" \
-    "${SRC[@]}" "$ROOT/tb/$TOP.sv" >"$BUILD/build.log" 2>&1; then
-    cat "$BUILD/build.log" >&2
+    "${SRC[@]}" "$ROOT/tb/$TOP.sv" >"$OUTPUT/build.log" 2>&1; then
+    cat "$OUTPUT/build.log" >&2
     exit 1
 fi
 
@@ -49,14 +51,13 @@ for h in "${TESTS[@]}"; do
     args=("+HEX=$h")
     if [[ ${TRACE:-0} == 1 ]]; then args+=("+TRACE=$BUILD/$name.vcd"); fi
     status=0
-    timeout "${SIM_TIMEOUT:-180}" "$BUILD/simulator" "${args[@]}" >"$BUILD/$name.log" 2>&1 || status=$?
-    if (( status == 0 )) && grep -q '^PASS ' "$BUILD/$name.log" \
-        && ! grep -qE '^(FAIL|TIMEOUT)' "$BUILD/$name.log"; then
-        grep '^PASS ' "$BUILD/$name.log"
+    timeout "${SIM_TIMEOUT:-180}" "$BUILD/simulator" "${args[@]}" >"$OUTPUT/test.log" 2>&1 || status=$?
+    if (( status == 0 )) && grep -q '^PASS ' "$OUTPUT/test.log" \
+        && ! grep -qE '^(FAIL|TIMEOUT)' "$OUTPUT/test.log"; then
         pass=$((pass+1))
     else
-        echo "FAIL $name (exit $status; log: $BUILD/$name.log)"
-        cat "$BUILD/$name.log"
+        echo "FAIL $name (exit $status)" >&2
+        cat "$OUTPUT/test.log" >&2
         fail=$((fail+1))
     fi
 done

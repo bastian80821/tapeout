@@ -21,3 +21,18 @@ sim/obj_dir/
 *.sim/
 *.runs/
 *.gen/
+
+# make lint / synth outputs
+build/
+
+# python and cocotb
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+sim_build/
+results.xml
+
+# nix
+result
+.direnv/

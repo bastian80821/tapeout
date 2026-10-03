@@ -1,0 +1,20 @@
+`verilator_config
+// Lint waivers used by make lint (lint-only with -Wall).
+// Note: a comment that starts with the tool's name is read as a directive,
+// and backticks start macros, so keep both out of comments in this file.
+//
+// Every waiver is scoped to one file and, where possible, one signal, so a new
+// warning anywhere else still fails lint and CI. Add a waiver only for a
+// warning that has been read and judged harmless, and say why.
+
+// Style only: some files end without a trailing newline.
+lint_off -rule EOFNEWLINE
+
+// The core leaves the decoder's opc and func7 outputs unconnected on purpose.
+lint_off -rule PINCONNECTEMPTY -file "*rtl/core/core.sv"
+
+// imm_gen never needs the opcode bits; the caller passes the whole instruction.
+lint_off -rule UNUSEDSIGNAL -file "*rtl/core/imm_gen.sv" -match "*'inst'*"
+
+// The bootloader shifts bytes through word_buf; its low byte is replaced before use.
+lint_off -rule UNUSEDSIGNAL -file "*rtl/bootloader.sv" -match "*'word_buf'*"

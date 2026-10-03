@@ -19,11 +19,58 @@ load-use interlock to handle that. The FSM absorbs it in one extra state.
 
 ## Running it
 
+Everything goes through `make`, and CI runs the same targets, so a clean
+`make ci` locally means a clean CI run.
+
 ```sh
-./sim/run_iverilog.sh 16        # core only, all tests
-./sim/run_iverilog.sh 32        # same at 32 registers
-./sim/run_soc.sh                # full SoC, program loaded over serial
+make env                     # check your tools
+make lint                    # verilator -Wall on the single-core soc
+make synth                   # generic yosys synthesis check (no PDK needed)
+make check-top               # elaborate the dual-core soc_top at both RAM plans
+make test                    # core and SoC program tests at NREGS=16
+make test-core NREGS=32      # core only, 32 registers
+make test-soc TEST=sample    # quick SoC boot check
+make test-unit BLOCK=arbiter # one block's unit testbench
+make waves TEST=addi         # one core test with a VCD
+make ci                      # everything CI requires
 ```
+
+The scripts in `sim/` still work directly; the Makefile only wraps them.
+
+### Tools
+
+- **Nix (Linux or macOS):** `nix develop` gives the exact tool versions CI
+  uses, pinned by `flake.lock`. Add a waveform viewer yourself on macOS.
+- **Homebrew (macOS):** `brew install verilator icarus-verilog yosys coreutils bash`,
+  plus Surfer for waveforms. Verilator must be 5.036 or newer, and bash 4 or
+  newer (macOS ships 3.2; `run_unit.sh` needs the newer one).
+- **Windows:** WSL2 with Ubuntu, then either option above.
+
+Then run `make env`. It fails on anything `make ci` needs and only warns about
+the RISC-V compiler, Spike and cocotb, which nothing needs yet.
+
+Lint runs with `-Wall`. Known harmless warnings are waived one by one in
+`tools/lint_waivers.vlt`; any new warning fails the build.
+
+### Unit testbenches
+
+Each block in `rtl/bus`, `rtl/cache`, `rtl/mem` and `rtl/periph` has a unit
+testbench in `tb/`. Until its checks are written it prints
+`no checks written yet` and fails. When a block's checks are real, add the
+block to `UNIT_GATED` in the Makefile; from then on `make ci` and CI require
+it to pass.
+
+### CI
+
+Every push to `main` and every pull request runs `.github/workflows/ci.yml`:
+environment check, lint, synthesis check, the `soc_top` elaboration check,
+core and SoC tests at 16 and 32 registers, and the gated unit testbenches,
+inside `nix develop .#ci`. All unit testbenches also run in an informational
+step that can't fail the build. Logs are uploaded when a step fails. The
+physical-implementation flow (LibreLane) is not in CI; it runs at milestones
+against tagged RTL.
+
+### Vivado
 
 Vivado, non-project mode:
 

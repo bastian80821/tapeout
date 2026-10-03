@@ -1,0 +1,68 @@
+# Toolchain A CI: runs the same make targets as a local `make ci`, with tool
+# versions pinned by flake.lock. Toolchain B (LibreLane) is deliberately not
+# here: it runs at milestones against tagged RTL, not on every push.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  toolchain-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Tool versions and environment check
+        run: |
+          nix develop .#ci --command bash -c 'verilator --version; iverilog -V | head -1; yosys -V'
+          nix develop .#ci --command ./tools/check_env.sh
+
+      - name: Lint (verilator -Wall)
+        run: nix develop .#ci --command make lint
+
+      - name: Synthesis check (generic yosys)
+        run: nix develop .#ci --command make synth
+
+      - name: Dual-core top elaboration (check_top.sh)
+        run: nix develop .#ci --command make check-top
+
+      - name: Core tests, 16 registers
+        run: nix develop .#ci --command make test-core NREGS=16
+
+      - name: Core tests, 32 registers
+        run: nix develop .#ci --command make test-core NREGS=32
+
+      - name: SoC boot tests, 16 registers
+        run: nix develop .#ci --command make test-soc NREGS=16
+
+      - name: SoC boot tests, 32 registers
+        run: nix develop .#ci --command make test-soc NREGS=32
+
+      - name: Unit testbenches with real checks (UNIT_GATED)
+        run: nix develop .#ci --command make test-unit-gated
+
+      # Every unit testbench, including ones still marked "no checks written
+      # yet". Shown for information; a failure here doesn't fail the run.
+      - name: All unit testbenches (informational)
+        continue-on-error: true
+        run: nix develop .#ci --command make test-unit
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            sim/obj_dir/*/*.log
+            build/
+          if-no-files-found: ignore

@@ -6,7 +6,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [infra/build-ci]
   pull_request:
 
 concurrency:

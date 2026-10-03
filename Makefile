@@ -14,6 +14,9 @@ BUILD := build
 NREGS ?= 16
 TEST  ?= all
 BLOCK ?= all
+SYNTH_FLAGS ?= -noabc
+SYNTH_TIMEOUT ?= 120s
+SYNTH_REPORT ?= check
 
 # Unit testbenches with real checks. A block's testbench prints "no checks
 # written yet" until its owner writes them; add the block here at that point
@@ -21,13 +24,14 @@ BLOCK ?= all
 # Blocks: arbiter addr_decode icache sram_mem mmio
 UNIT_GATED :=
 
-.PHONY: help env lint synth check-top test test-core test-soc test-all \
+.PHONY: help env lint synth synth-full check-top test test-core test-soc test-all \
         test-unit test-unit-gated waves ci clean
 
 help:
 	@echo "make env                  check the toolchain A install"
 	@echo "make lint                 verilator -Wall on the single-core soc, 16 and 32 registers"
-	@echo "make synth                generic yosys synthesis check of soc, 16 and 32 registers"
+	@echo "make synth                yosys synthesis check without ABC, 16 and 32 registers"
+	@echo "make synth-full           full generic synthesis including ABC gate optimization"
 	@echo "make check-top            elaborate the dual-core soc_top (iverilog, verilator, yosys)"
 	@echo "make test                 core and SoC program tests at NREGS=$(NREGS)"
 	@echo "make test-core            core tests     (NREGS=16|32, TEST=all|<name>)"
@@ -55,21 +59,30 @@ lint:
 # Generic synthesis: no PDK needed. Catches latches, multiple drivers, logic
 # loops and unsynthesisable constructs. MEM_WORDS is shrunk because the
 # behavioural RAM would otherwise become thousands of flip-flops; on silicon
-# that memory is an SRAM macro, not logic.
+# that memory is an SRAM macro, not logic. PR checks skip ABC gate optimization;
+# synth-full retains that flow for inspecting optimized cell counts.
+# Bound each tool process and print its passes so a stalled run is diagnosable.
 synth:
-	@mkdir -p $(BUILD)/synth
+	@mkdir -p $(BUILD)/synth/$(SYNTH_REPORT)
 	@for n in 16 32; do \
-	  echo "yosys generic synthesis, NREGS=$$n"; \
-	  yosys -q -l $(BUILD)/synth/soc_$$n.log -p " \
+	  echo "yosys synthesis, NREGS=$$n, MEM_WORDS=16, flags=$(SYNTH_FLAGS), timeout=$(SYNTH_TIMEOUT)"; \
+	  status=0; \
+	  timeout --kill-after=10s $(SYNTH_TIMEOUT) yosys -l $(BUILD)/synth/$(SYNTH_REPORT)/soc_$$n.log -p " \
 	    read_verilog -sv -DSYNTHESIS $(RTL); \
 	    chparam -set NREGS $$n -set MEM_WORDS 16 soc; \
 	    hierarchy -top soc -check; \
 	    proc; opt; check -assert; \
-	    synth -top soc; check -assert; \
-	    tee -q -o $(BUILD)/synth/soc_$$n.stat stat" || exit 1; \
-	  echo "  $$(grep -E '^ +[0-9]+ +cells' $(BUILD)/synth/soc_$$n.stat | tail -1 | tr -s ' ') in total"; \
+	    synth -top soc $(SYNTH_FLAGS); check -assert; \
+	    tee -q -o $(BUILD)/synth/$(SYNTH_REPORT)/soc_$$n.stat stat" || status=$$?; \
+	  if [ "$$status" -ne 0 ]; then \
+	    echo "synthesis failed, NREGS=$$n, exit=$$status (124 indicates timeout; 137 indicates forced termination)" >&2; \
+	    exit "$$status"; \
+	  fi; \
 	done
-	@echo "synthesis check clean (reports in $(BUILD)/synth/)"
+	@echo "synthesis check clean (reports in $(BUILD)/synth/$(SYNTH_REPORT)/)"
+
+synth-full:
+	$(MAKE) --no-print-directory synth SYNTH_FLAGS= SYNTH_REPORT=full
 
 # Bastian's elaboration check of soc_top at both RAM plans (RAW=10 and 11).
 check-top:

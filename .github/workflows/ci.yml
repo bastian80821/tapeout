@@ -8,12 +8,43 @@ on:
   push:
     branches: [infra/build-ci]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  synthesis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Revision and synthesis tool version
+        run: |
+          git rev-parse HEAD
+          nix develop .#ci --command yosys -V
+
+      # Independent of simulation so a synthesis failure cannot skip its tests.
+      - name: Synthesis check (without ABC gate optimization)
+        timeout-minutes: 5
+        run: nix develop .#ci --command make synth
+
+      - name: Upload synthesis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthesis-reports
+          path: build/synth/
+          if-no-files-found: ignore
+          retention-days: 7
+
   toolchain-a:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -24,14 +55,12 @@ jobs:
 
       - name: Tool versions and environment check
         run: |
+          git rev-parse HEAD
           nix develop .#ci --command bash -c 'verilator --version; iverilog -V | head -1; yosys -V'
           nix develop .#ci --command ./tools/check_env.sh
 
       - name: Lint (verilator -Wall)
         run: nix develop .#ci --command make lint
-
-      - name: Synthesis check (generic yosys)
-        run: nix develop .#ci --command make synth
 
       - name: Dual-core top elaboration (check_top.sh)
         run: nix develop .#ci --command make check-top
@@ -58,7 +87,7 @@ jobs:
         run: nix develop .#ci --command make test-unit
 
       - name: Upload logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logs
@@ -66,3 +95,4 @@ jobs:
             sim/obj_dir/*/*.log
             build/
           if-no-files-found: ignore
+          retention-days: 7
